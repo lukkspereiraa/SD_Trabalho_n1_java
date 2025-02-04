@@ -4,62 +4,62 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-public class SubsetSumParallel {
+public class SubsetSumWithThreads {
 
     // Classe para armazenar o resultado de cada thread
     private static class Result {
         int count = 0;
     }
 
-    // Função recursiva para contar subconjuntos
-    private static void countSubsets(int[] S, int n, int x, int index, int currentSum, Result result) {
-        if (currentSum == x) {
-            result.count++;
-            return;
-        }
-        if (currentSum > x || index >= n) {
-            return;
-        }
-        // Inclui o elemento atual e verifica
-        countSubsets(S, n, x, index + 1, currentSum + S[index], result);
-        // Exclui o elemento atual e verifica
-        countSubsets(S, n, x, index + 1, currentSum, result);
-    }
-
-    // Classe que representa uma thread
+    // Classe que representa uma tarefa executada por uma thread
     private static class SubsetSumTask implements Runnable {
         private int[] S;
-        private int n;
         private int x;
-        private int startIndex;
+        private int startMask;
+        private int endMask;
         private Result result;
 
-        public SubsetSumTask(int[] S, int n, int x, int startIndex, Result result) {
+        public SubsetSumTask(int[] S, int x, int startMask, int endMask, Result result) {
             this.S = S;
-            this.n = n;
             this.x = x;
-            this.startIndex = startIndex;
+            this.startMask = startMask;
+            this.endMask = endMask;
             this.result = result;
         }
 
         @Override
         public void run() {
-            countSubsets(S, n, x, startIndex, 0, result);
+            for (int mask = startMask; mask < endMask; mask++) {
+                int sum = 0;
+                for (int i = 0; i < S.length; i++) {
+                    if ((mask & (1 << i)) != 0) { // Verifica se o i-ésimo elemento está no subconjunto
+                        sum += S[i];
+                    }
+                }
+                if (sum == x) {
+                    result.count++;
+                }
+            }
         }
     }
 
-    // Função para processar uma instância
-    private static int processInstance(int[] S, int x, int numThreads) {
-        int n = S.length;
+    // Função para contar subconjuntos que somam x usando threads
+    private static int countSubsets(int[] S, int x, int numThreads) {
+        int n = S.length; // Tamanho do conjunto
+        int totalSubsets = 1 << n; // Número total de subconjuntos (2^n)
         List<Result> results = new ArrayList<>();
-        for (int i = 0; i < numThreads; i++) {
-            results.add(new Result());
-        }
-
         List<Thread> threads = new ArrayList<>();
+
+        // Divide o trabalho entre as threads
+        int subsetsPerThread = totalSubsets / numThreads;
         for (int i = 0; i < numThreads; i++) {
-            int startIndex = i; // Cada thread começa de um índice diferente
-            SubsetSumTask task = new SubsetSumTask(S, n, x, startIndex, results.get(i));
+            int startMask = i * subsetsPerThread;
+            int endMask = (i == numThreads - 1) ? totalSubsets : startMask + subsetsPerThread;
+
+            Result result = new Result();
+            results.add(result);
+
+            SubsetSumTask task = new SubsetSumTask(S, x, startMask, endMask, result);
             Thread thread = new Thread(task);
             threads.add(thread);
             thread.start();
@@ -83,12 +83,25 @@ public class SubsetSumParallel {
         return totalCount;
     }
 
+    // Função para processar uma instância
+    private static void processInstance(int[] S, int x, int numThreads) {
+        long startTime = System.currentTimeMillis();
+        int totalCount = countSubsets(S, x, numThreads);
+        long endTime = System.currentTimeMillis();
+        long duration = endTime - startTime;
+
+        System.out.println("Threads: " + numThreads);
+        System.out.println("Subconjuntos encontrados: " + totalCount);
+        System.out.println("Tempo de execução: " + duration + " ms");
+        System.out.println("--------------------------");
+    }
+
     // Função para ler o arquivo .zip e processar as instâncias
-    private static void processZipFile(String zipFilePath) {
+    private static void processZipFile(String zipFilePath, int x) {
         try (ZipFile zipFile = new ZipFile(zipFilePath)) {
             zipFile.stream().forEach(entry -> {
                 if (!entry.isDirectory()) {
-                    processZipEntry(zipFile, entry);
+                    processZipEntry(zipFile, entry, x);
                 }
             });
         } catch (IOException e) {
@@ -97,24 +110,19 @@ public class SubsetSumParallel {
     }
 
     // Função para processar cada entrada no arquivo .zip
-    private static void processZipEntry(ZipFile zipFile, ZipEntry entry) {
+    private static void processZipEntry(ZipFile zipFile, ZipEntry entry, int x) {
         try (InputStream inputStream = zipFile.getInputStream(entry);
              BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
 
             String line;
             List<Integer> numbers = new ArrayList<>();
-            int x = 0;
 
             // Lê o arquivo de instância
             while ((line = reader.readLine()) != null) {
-                if (line.startsWith("x:")) {
-                    x = Integer.parseInt(line.split(":")[1].trim());
-                } else {
-                    String[] parts = line.split("\\s+");
-                    for (String part : parts) {
-                        if (!part.isEmpty()) {
-                            numbers.add(Integer.parseInt(part));
-                        }
+                String[] parts = line.split("\\s+");
+                for (String part : parts) {
+                    if (!part.isEmpty()) {
+                        numbers.add(Integer.parseInt(part));
                     }
                 }
             }
@@ -122,24 +130,11 @@ public class SubsetSumParallel {
             // Converte a lista para um array
             int[] S = numbers.stream().mapToInt(i -> i).toArray();
 
+            System.out.println("Processando instância: " + entry.getName());
+
             // Processa a instância com 1, 2, 3 e 4 threads
             for (int numThreads = 1; numThreads <= 4; numThreads++) {
-                long startTime = System.currentTimeMillis();
-                int totalCount = processInstance(S, x, numThreads);
-                long endTime = System.currentTimeMillis();
-                long duration = endTime - startTime;
-
-                System.out.println("Instância: " + entry.getName());
-                System.out.println("Threads: " + numThreads);
-                System.out.println("Subconjuntos encontrados: " + totalCount);
-                System.out.println("Tempo de execução: " + duration + " ms");
-                System.out.println("--------------------------");
-
-                // Interrompe se o tempo exceder 3600 segundos
-                if (duration > 3600 * 1000) {
-                    System.out.println("Tempo excedido para " + numThreads + " threads.");
-                    break;
-                }
+                processInstance(S, x, numThreads);
             }
 
         } catch (IOException e) {
@@ -149,6 +144,7 @@ public class SubsetSumParallel {
 
     public static void main(String[] args) {
         String zipFilePath = "instancias.zip"; // Nome fixo do arquivo .zip
+        int x = 100; // Valor de x fixo (pode ser ajustado conforme necessário)
 
         // Verifica se o arquivo .zip existe
         File zipFile = new File(zipFilePath);
@@ -158,6 +154,6 @@ public class SubsetSumParallel {
         }
 
         System.out.println("Arquivo .zip encontrado: " + zipFilePath);
-        processZipFile(zipFilePath);
+        processZipFile(zipFilePath, x);
     }
 }
